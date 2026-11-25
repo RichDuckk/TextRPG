@@ -1,5 +1,5 @@
-// Здесь я подключаю стандартные библиотеки для ввода/вывода, текста,
-// списка предметов и сцен, а также для очистки неверного ввода.
+// Здесь я подключаю стандартные библиотеки для файлов сохранения, текста,
+// поиска предметов и хранения сцен с вариантами выбора.
 #include <iostream>
 #include <fstream>
 #include <iomanip>
@@ -9,322 +9,50 @@
 #include <string>
 #include <vector>
 
-// Здесь я храню состояние героя: характеристики и количество каждого предмета.
+// Здесь я храню состояние героя. Все три характеристики начинаются с пяти.
 struct Player {
-    int frostMagic = 3;
-    int strength = 4;
+    int strength = 5;
+    int frostMagic = 5;
+    int dexterity = 5;
     int freePoints = 3;
-    // В этой map я связываю название предмета с его количеством.
-    // В паре map поле first — название предмета, а second — его количество.
     std::map<std::string, int> inventory{{"Обычная стрела", 2}};
 };
 
-// Этим значением я различаю требования к характеристике и к предмету.
-enum class RequirementType {
-    stat,
-    item
-};
-
-// Каждое требование хранит название характеристики или предмета и нужное число.
-struct Requirement {
-    RequirementType type;
-    std::string name;
-    int amount;
-};
-
-// Наградой я добавляю предметы в инвентарь при входе в сцену.
-struct Reward {
-    std::string item;
-    int amount;
-};
-
-// Наградой я могу увеличить характеристику, например Стужу после изучения льда.
-struct StatReward {
-    std::string stat;
-    int amount;
-};
-
-// У каждого действия есть текст, следующая сцена, требования и затраты.
+enum class RequirementType { stat, item };
+struct Requirement { RequirementType type; std::string name; int amount; };
+struct Reward { std::string item; int amount; };
+struct StatReward { std::string stat; int amount; };
 struct Choice {
     std::string text;
     std::string nextSceneId;
     std::vector<Requirement> requirements;
     std::vector<Requirement> costs;
 };
-
-// Сцена хранит скрытый ID для загрузки текста и переходов, выборы и награды.
-// ID не показывается игроку как заголовок.
 struct Scene {
     std::string id;
     std::vector<Choice> choices;
     std::vector<Reward> rewards;
     std::vector<StatReward> statRewards;
 };
+struct SpeakerStyle { std::string name; std::string color; };
 
-// Здесь я задаю стиль только для имён говорящих; остальной рассказ будет курсивным.
-struct SpeakerStyle {
-    std::string name;
-    std::string color;
-};
-
+// Здесь я выбираю отдельный цвет для каждой подписи говорящего.
 const std::vector<SpeakerStyle> speakerStyles{
-    // Здесь я задаю ANSI-стиль: 1 включает жирность, 34/33 выбирают синий/жёлтый цвет.
-    {"Вальфрост:", "\033[1;34m"},
-    {"Утер:", "\033[1;33m"},
-    {"Пе́р:", "\033[1;38;5;208m"},
-    {"Гордон:", "\033[1;36m"}
+    {"Вальфрост:", "\033[1;34m"}, // Синий: голос главного героя.
+    {"Утер:", "\033[1;33m"},      // Тёплый жёлтый: спокойный голос деда.
+    {"Пе́р:", "\033[1;38;5;208m"}, // Оранжевый: углежог и его лагерь.
+    {"Пер:", "\033[1;38;5;208m"},  // Здесь я поддерживаю цвет, даже если в тексте нет ударения.
+    {"Гордон:", "\033[1;36m"},    // Голубой: дружелюбный Гордон.
+    {"Чак:", "\033[1;32m"},        // Зелёный: приветливый страж у ворот.
+    {"Углежог:", "\033[1;38;5;130m"} // Охристый: остальные жители лагеря.
 };
 
-// Здесь я храню ID сцен и игровые переходы; сам рассказ лежит в data/scenes/<ID>.txt.
-// ID нужны программе и не выводятся на экран.
-const std::vector<Scene> scenes{
-    {
-        "first_hunt",
-            {
-            {
-                "Выстрелить в зайца у кустов",
-                "after_first_shot",
-                {{RequirementType::item, "Обычная стрела", 1}},
-                {{RequirementType::item, "Обычная стрела", 1}}
-            },
-            {
-                "Выстрелить в зайца под елью",
-                "after_first_shot",
-                {{RequirementType::item, "Обычная стрела", 1}},
-                {{RequirementType::item, "Обычная стрела", 1}}
-            }
-        }
-    },
-    {
-        "after_first_shot",
-            {
-            {
-                "Выстрелить во второго зайца",
-                "shoot_second_rabbit",
-                {{RequirementType::item, "Обычная стрела", 1}},
-                {{RequirementType::item, "Обычная стрела", 1}}
-            },
-            {
-                "Сковать его лапы льдом",
-                "freeze_rabbit",
-                {{RequirementType::stat, "Стужа", 2}},
-                {}
-            }
-        }
-    },
-    {
-        "shoot_second_rabbit",
-            {{"Забрать добычу", "gather_rabbits"}}
-    },
-    {
-        "gather_rabbits",
-            {{"Отправиться на встречу с Утером", "meet_uter"}},
-            {{"Заяц", 2}}
-    },
-    {
-        "freeze_rabbit",
-            {
-            {"Дать ему уйти", "let_rabbit_escape"},
-            {
-                "Выстрелить в замороженного зайца",
-                "shoot_frozen_rabbit",
-                {{RequirementType::item, "Обычная стрела", 1}},
-                {{RequirementType::item, "Обычная стрела", 1}}
-            }
-        }
-    },
-    {
-        "let_rabbit_escape",
-            {},
-            {{"Заяц", 1}}
-    },
-    {
-        "shoot_frozen_rabbit",
-            {{"Отправиться на встречу с Утером", "meet_uter_ice"}},
-            {{"Заяц", 2}}
-    },
-    {
-        "meet_uter",
-            {
-            {"Посмеяться", "laugh_at_uter"},
-            {"Пошутить в ответ", "joke_with_uter"},
-            {"Промолчать", "stay_silent"}
-        }
-    },
-    {
-        "meet_uter_ice",
-            {{"Далее", "wolf_tracks"}}
-    },
-    {
-        "laugh_at_uter",
-            {{"Далее", "thoughts_about_hunt"}}
-    },
-    {
-        "joke_with_uter",
-            {{"Далее", "boar_debate"}}
-    },
-    {
-        "stay_silent",
-            {{"Далее", "uter_notices_silence"}}
-    },
-    {
-        "thoughts_about_hunt",
-            {{"Далее", "hunting_advice"}}
-    },
-    {
-        "hunting_advice",
-            {{"Далее", "village_fork"}}
-    },
-    {
-        "boar_debate",
-            {{"Далее", "uter_pride"}}
-    },
-    {
-        "uter_pride",
-            {{"Далее", "village_fork"}}
-    },
-    {
-        "uter_notices_silence",
-            {{"Далее", "village_fork"}}
-    },
-    {
-        "village_fork",
-            {
-            {"Свернуть к углежогам", "charcoal_camp"},
-            {"Идти дальше до деревни", "short_way_home"}
-        }
-    },
-    {
-        "charcoal_camp",
-            {
-            {"Осмотреться", "coal_bags"},
-            {"Попрощаться и пойти домой", "leave_camp"}
-        }
-    },
-    {
-        "short_way_home",
-            {
-            {"Рассказать Утеру о гильдии", "tell_uter_about_guild"},
-            {"Промолчать", "keep_dream_to_myself"}
-        }
-    },
-    {
-        "coal_bags",
-            {
-            {"Помочь перенести мешки", "help_carry_coal", {{RequirementType::stat, "Сила", 5}}},
-            {"Попрощаться и пойти домой", "leave_camp"}
-        }
-    },
-    {
-        "help_carry_coal",
-            {{"Попрощаться и пойти домой", "leave_camp"}}
-    },
-    {
-        "leave_camp",
-            {
-            {"Поговорить с Гордоном", "talk_to_gordon"},
-            {"Вернуться в деревню", ""}
-        }
-    },
-    {
-        "talk_to_gordon",
-            {{"Вернуться в деревню", ""}}
-    },
-    {
-        "tell_uter_about_guild",
-            {{"Вернуться в деревню", ""}}
-    },
-    {
-        "keep_dream_to_myself",
-            {{"Вернуться в деревню", ""}}
-    },
-    {
-        "wolf_tracks",
-            {
-            {"Остаться на тропе", "stay_on_trail"},
-            {"Пойти по следам", "follow_wolf_tracks"}
-        }
-    },
-    {
-        "stay_on_trail",
-            {{"Заглянуть к углежогам", "warn_wolf_at_camp"}}
-    },
-    {
-        "warn_wolf_at_camp",
-            {
-            {"Осмотреться", "coal_bags"},
-            {"Попрощаться и пойти домой", "leave_camp"}
-        }
-    },
-    {
-        "follow_wolf_tracks",
-            {{"Продолжить по следу", "wolf_in_thicket"}}
-    },
-    {
-        "wolf_in_thicket",
-            {
-            {"Предложить тихо уйти", "wolf_retreat"},
-            {
-                "Выстрелить лютоволку в лапу",
-                "wolf_arrow_shot",
-                {{RequirementType::item, "Обычная стрела", 1}},
-                {{RequirementType::item, "Обычная стрела", 1}}
-            },
-            {
-                "Попробовать сковать лапы лютоволка стужей",
-                "wolf_freeze_plan",
-                {{RequirementType::stat, "Стужа", 5}},
-                {}
-            }
-        }
-    },
-    {
-        "wolf_retreat",
-            {{"Заглянуть к углежогам", "warn_wolf_at_camp"}}
-    },
-    {
-        "wolf_arrow_shot",
-            {}
-    },
-    {
-        "wolf_freeze_plan",
-            {
-            {"Удерживать лёд, пока Утер добивает зверя", "wolf_death"},
-            {"Присмотреться ко льду", "inspect_ice"}
-        }
-    },
-    {
-        "inspect_ice",
-            {
-            {
-                "Вырастить ледяную пику",
-                "ice_spear",
-                {{RequirementType::stat, "Стужа", 6}},
-                {}
-            },
-            {"Удерживать лёд, пока Утер добивает зверя", "wolf_death"}
-        },
-            {},
-            {{"Стужа", 1}}
-    },
-    {
-        "wolf_death",
-            {{"Поднять лютоволка", "lift_wolf"}}
-    },
-    {
-        "lift_wolf",
-            {}
-    },
-    {
-        "ice_spear",
-            {}
-    }
-};
+#include "scene_data.hpp"
 
-// Я объявляю эту функцию заранее, потому что пауза использует её выше по файлу.
 void clearScreen();
+const Scene* findScene(const std::string& sceneId);
+int readNumber(int minValue, int maxValue, const std::string& prompt);
 
-// Здесь я жду Enter, чтобы игрок успел прочитать экран.
 void waitForEnter() {
     std::cout << "\nНажми Enter, чтобы продолжить...";
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
@@ -332,155 +60,99 @@ void waitForEnter() {
     clearScreen();
 }
 
-// По названию я возвращаю текущее значение характеристики героя.
 int getStat(const Player& player, const std::string& name) {
-    if (name == "Стужа") {
-        return player.frostMagic;
-    }
-    if (name == "Сила") {
-        return player.strength;
-    }
+    if (name == "Сила") return player.strength;
+    if (name == "Стужа") return player.frostMagic;
+    if (name == "Ловкость") return player.dexterity;
     return 0;
 }
 
-// Если предмета нет в инвентаре, его количество равно нулю.
 int getItemCount(const Player& player, const std::string& item) {
-    // Здесь я ищу предмет через find: в отличие от [], он не добавит отсутствующий предмет.
     const auto found = player.inventory.find(item);
-    // Если find вернул end(), значит, предмет не найден и его запас равен нулю.
-    if (found == player.inventory.end()) {
-        return 0;
-    }
-    return found->second;
+    return found == player.inventory.end() ? 0 : found->second;
 }
 
-// Здесь я проверяю все требования действия: характеристику и/или предметы.
 bool meetsRequirements(const Player& player, const std::vector<Requirement>& requirements) {
     for (const Requirement& requirement : requirements) {
-        int currentAmount = 0;
-        if (requirement.type == RequirementType::stat) {
-            currentAmount = getStat(player, requirement.name);
-        } else {
-            currentAmount = getItemCount(player, requirement.name);
-        }
-
-        // Здесь я проверяю, что у героя не меньше предметов или очков, чем требует выбор.
-        if (currentAmount < requirement.amount) {
-            return false;
-        }
+        const int current = requirement.type == RequirementType::stat
+                                ? getStat(player, requirement.name)
+                                : getItemCount(player, requirement.name);
+        if (current < requirement.amount) return false;
     }
     return true;
 }
 
-// Эта функция печатает требование рядом с действием в подходящем формате.
 void printRequirement(const Requirement& requirement) {
-    std::cout << requirement.name;
-    if (requirement.type == RequirementType::stat) {
-        std::cout << " ≥ ";
-    } else {
-        std::cout << " × ";
-    }
-    std::cout << requirement.amount;
+    std::cout << requirement.name
+              << (requirement.type == RequirementType::stat ? " ≥ " : " × ")
+              << requirement.amount;
 }
 
-// После удачного выбора я вычитаю из инвентаря потраченные предметы.
 void applyCosts(Player& player, const Choice& choice) {
     for (const Requirement& cost : choice.costs) {
-        if (cost.type == RequirementType::item) {
-            // После проверки требования я уменьшаю запас предмета на его стоимость.
-            player.inventory[cost.name] -= cost.amount;
-        }
+        if (cost.type == RequirementType::item) player.inventory[cost.name] -= cost.amount;
     }
 }
 
-const Scene* findScene(const std::string& sceneId);
-int readNumber(int minValue, int maxValue, const std::string& prompt);
-
-// Я записываю текущую сцену и состояние героя в обычный текстовый файл.
 bool saveGame(const Player& player, const std::string& sceneId) {
     std::ofstream saveFile("savegame.txt");
-    if (!saveFile) {
-        return false;
-    }
-
-    saveFile << "TEXTRPG_SAVE_V1\n"
-             << std::quoted(sceneId) << '\n'
-             << player.strength << ' ' << player.frostMagic << ' ' << player.freePoints << '\n'
+    if (!saveFile) return false;
+    saveFile << "ICE_THRONE_SAVE_V2\n" << std::quoted(sceneId) << '\n'
+             << player.strength << ' ' << player.frostMagic << ' '
+             << player.dexterity << ' ' << player.freePoints << '\n'
              << player.inventory.size() << '\n';
     for (const auto& item : player.inventory) {
-        // std::quoted сохраняет названия предметов с пробелами как одну строку.
         saveFile << std::quoted(item.first) << ' ' << item.second << '\n';
     }
     return static_cast<bool>(saveFile);
 }
 
-// Я читаю сохранение во временный объект и меняю героя только после проверки всех данных.
+// Я сначала проверяю все поля сохранения, и только потом заменяю состояние героя.
 bool loadGame(Player& player, std::string& sceneId) {
     std::ifstream saveFile("savegame.txt");
-    std::string version;
-    std::string savedSceneId;
-    int strength = 0;
-    int frostMagic = 0;
-    int freePoints = 0;
-    int itemCount = 0;
-
-    if (!(saveFile >> version) || version != "TEXTRPG_SAVE_V1"
-        || !(saveFile >> std::quoted(savedSceneId)
-             >> strength >> frostMagic >> freePoints >> itemCount)) {
-        return false;
-    }
-    if (strength < 0 || frostMagic < 0 || freePoints < 0 || itemCount < 0 || itemCount > 1000
-        || findScene(savedSceneId) == nullptr) {
-        return false;
-    }
+    std::string version, savedSceneId;
+    int strength = 0, frost = 0, dexterity = 0, freePoints = 0, itemCount = 0;
+    if (!(saveFile >> version) || version != "ICE_THRONE_SAVE_V2"
+        || !(saveFile >> std::quoted(savedSceneId) >> strength >> frost
+             >> dexterity >> freePoints >> itemCount)) return false;
+    if (strength < 0 || frost < 0 || dexterity < 0 || freePoints < 0
+        || itemCount < 0 || itemCount > 1000 || findScene(savedSceneId) == nullptr) return false;
 
     std::map<std::string, int> inventory;
-    for (int index = 0; index < itemCount; ++index) {
-        std::string itemName;
+    for (int i = 0; i < itemCount; ++i) {
+        std::string name;
         int amount = 0;
-        if (!(saveFile >> std::quoted(itemName) >> amount) || amount < 0) {
-            return false;
-        }
-        inventory[itemName] = amount;
+        if (!(saveFile >> std::quoted(name) >> amount) || amount < 0) return false;
+        inventory[name] = amount;
     }
-
     player.strength = strength;
-    player.frostMagic = frostMagic;
+    player.frostMagic = frost;
+    player.dexterity = dexterity;
     player.freePoints = freePoints;
     player.inventory = inventory;
     sceneId = savedSceneId;
     return true;
 }
 
-// Здесь я показываю предметы и даю вернуться, сохранить или загрузить игру.
-std::string showInventory(Player& player, const std::string& currentSceneId, bool& loadedSave) {
+std::string showParameters(Player& player, const std::string& currentSceneId,
+                           bool& loadedSave, bool& shouldQuit) {
     loadedSave = false;
+    shouldQuit = false;
     clearScreen();
-    std::cout << "=== ИНВЕНТАРЬ И ХАРАКТЕРИСТИКИ ===\n"
-              << "Сила: " << player.strength << '\n'
-              << "Стужа: " << player.frostMagic << "\n\n"
-              << "Предметы:\n";
-
-    for (const auto& item : player.inventory) {
-        // В паре map поле first — название предмета, а second — его количество.
-        std::cout << item.first << ": " << item.second << '\n';
-    }
-
-    std::cout << "\n1. Вернуться к сцене\n"
+    std::cout << "=== ПАРАМЕТРЫ ===\n\n"
+              << "1. Вернуться к игре\n"
               << "2. Сохранить игру\n"
-              << "3. Загрузить игру\n";
-    const int choice = readNumber(1, 3, "Твой выбор: ");
-    if (choice == -1 || choice == 1) {
-        return currentSceneId;
-    }
+              << "3. Загрузить игру\n"
+              << "4. Выйти из игры\n";
+    const int choice = readNumber(1, 4, "Твой выбор: ");
+    if (choice == -1 || choice == 1) return currentSceneId;
     if (choice == 2) {
         std::cout << (saveGame(player, currentSceneId)
-                          ? "\nИгра сохранена.\n"
-                          : "\nНе удалось сохранить игру.\n");
+                          ? "\nИгра сохранена.\n" : "\nНе удалось сохранить игру.\n");
         waitForEnter();
         return currentSceneId;
     }
-
+    if (choice == 4) { shouldQuit = true; return currentSceneId; }
     std::string savedSceneId;
     if (loadGame(player, savedSceneId)) {
         loadedSave = true;
@@ -491,296 +163,200 @@ std::string showInventory(Player& player, const std::string& currentSceneId, boo
     return currentSceneId;
 }
 
-// Эта функция очищает терминал и ставит курсор в его левый верхний угол.
-void clearScreen() {
-    // Здесь я стираю экран кодом 2J, ставлю курсор в начало через H и сразу отправляю команды через flush.
-    std::cout << "\033[2J\033[H" << std::flush;
+// Инвентарь показывает и вещи героя, и его характеристики.
+void showInventory(const Player& player) {
+    clearScreen();
+    std::cout << "=== ИНВЕНТАРЬ ===\n\nХАРАКТЕРИСТИКИ\n"
+              << "Сила: " << player.strength << '\n'
+              << "Стужа: " << player.frostMagic << '\n'
+              << "Ловкость: " << player.dexterity << "\n\nПРЕДМЕТЫ\n";
+    if (player.inventory.empty()) std::cout << "Пока пусто.\n";
+    for (const auto& item : player.inventory) std::cout << item.first << ": " << item.second << '\n';
+    waitForEnter();
 }
 
-// Я читаю число в заданном диапазоне и повторяю запрос, если ввод неверный.
+void clearScreen() { std::cout << "\033[2J\033[H" << std::flush; }
+
 int readNumber(int minValue, int maxValue, const std::string& prompt) {
     while (true) {
         std::cout << prompt;
         int number = 0;
-
-        // Здесь я читаю число; при ошибке cin сообщает об этом условии if.
         if (std::cin >> number) {
-            if (number >= minValue && number <= maxValue) {
-                return number;
-            }
+            if (number >= minValue && number <= maxValue) return number;
             std::cout << "Введи число от " << minValue << " до " << maxValue << ".\n";
         } else if (std::cin.eof()) {
-            // Если ввод закрыт (например, нажали Ctrl+D), я завершаю текущий экран.
             return -1;
         } else {
             std::cout << "Введи номер цифрой.\n";
-            // clear сбрасывает ошибку чтения, а ignore удаляет неверный текст до конца строки.
             std::cin.clear();
             std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
         }
     }
 }
 
-// Я прошу выбрать существующий вариант и проверяю его требования.
 int readChoice(const Scene& scene, const Player& player) {
     while (true) {
-        const int choice = readNumber(0, static_cast<int>(scene.choices.size()), "Твой выбор: ");
-        if (choice == -1) {
-            return -1;
+        const int choice = readNumber(0, 9, "Твой выбор: ");
+        if (choice < 0) return -1;
+        if (choice == 0) return -2;
+        if (choice == 9) return -3;
+        if (choice > static_cast<int>(scene.choices.size())) {
+            std::cout << "Такого варианта нет. Выбери пункт из списка.\n";
+            continue;
         }
-        if (choice == 0) {
-            return -2;
-        }
-
-        // Игрок видит нумерацию с 1, а vector начинается с индекса 0.
-        const int selectedIndex = choice - 1;
-        const Choice& selected = scene.choices[selectedIndex];
-        if (meetsRequirements(player, selected.requirements)) {
-            return selectedIndex;
-        }
-
+        const int index = choice - 1;
+        const Choice& selected = scene.choices[index];
+        if (meetsRequirements(player, selected.requirements)) return index;
         std::cout << "Не хватает: ";
-        bool firstMissingRequirement = true;
+        bool first = true;
         for (const Requirement& requirement : selected.requirements) {
             if (!meetsRequirements(player, {requirement})) {
-                if (!firstMissingRequirement) {
-                    std::cout << ", ";
-                }
+                if (!first) std::cout << ", ";
                 printRequirement(requirement);
-                firstMissingRequirement = false;
+                first = false;
             }
         }
         std::cout << ". Попробуй другой вариант.\n";
     }
 }
 
-// Здесь я показываю характеристики и предметы, чтобы видеть состояние героя.
-// Перед началом игры я даю потратить все три свободных очка.
 bool configurePlayer(Player& player, std::string& firstSceneId) {
     while (true) {
         clearScreen();
         std::cout << "=== СОЗДАНИЕ ГЕРОЯ ===\n"
                   << "Сила: " << player.strength << '\n'
                   << "Стужа: " << player.frostMagic << '\n'
+                  << "Ловкость: " << player.dexterity << '\n'
                   << "Свободные очки: " << player.freePoints << "\n\n";
-
         if (player.freePoints == 0) {
-            std::cout << "1. Начать игру\n"
-                      << "2. Загрузить сохранение\n"
-                      << "3. Назад\n";
+            std::cout << "1. Начать игру\n2. Загрузить сохранение\n3. Назад\n";
             const int choice = readNumber(1, 3, "Твой выбор: ");
-            if (choice == -1 || choice == 3) {
-                return false;
-            }
-            if (choice == 1) {
-                firstSceneId = "first_hunt";
-                return true;
-            }
-
-            if (loadGame(player, firstSceneId)) {
-                return true;
-            }
+            if (choice < 0 || choice == 3) return false;
+            if (choice == 1) { firstSceneId = "narration_63"; return true; }
+            if (loadGame(player, firstSceneId)) return true;
             std::cout << "\nНе удалось загрузить сохранение.\n";
             waitForEnter();
             continue;
         }
-
-        std::cout << "1. Добавить 1 к Силе\n"
-                  << "2. Добавить 1 к Стуже\n"
-                  << "3. Загрузить сохранение\n"
-                  << "4. Назад\n";
-        const int choice = readNumber(1, 4, "Твой выбор: ");
-        if (choice == -1 || choice == 4) {
-            return false;
-        }
-
-        if (choice == 3) {
-            if (loadGame(player, firstSceneId)) {
-                return true;
-            }
+        std::cout << "1. Добавить 1 к Силе\n2. Добавить 1 к Стуже\n"
+                  << "3. Добавить 1 к Ловкости\n4. Загрузить сохранение\n5. Назад\n";
+        const int choice = readNumber(1, 5, "Твой выбор: ");
+        if (choice < 0 || choice == 5) return false;
+        if (choice == 4) {
+            if (loadGame(player, firstSceneId)) return true;
             std::cout << "\nНе удалось загрузить сохранение.\n";
             waitForEnter();
             continue;
         }
-
-        if (choice == 1) {
-            ++player.strength;
-        } else {
-            ++player.frostMagic;
-        }
+        if (choice == 1) ++player.strength;
+        else if (choice == 2) ++player.frostMagic;
+        else ++player.dexterity;
         --player.freePoints;
     }
 }
 
-// По внутреннему ID я нахожу сцену, на которую ведёт выбранное действие.
 const Scene* findScene(const std::string& sceneId) {
-    for (const Scene& scene : scenes) {
-        if (scene.id == sceneId) {
-            // Здесь я возвращаю адрес найденной сцены, не копируя весь её текст.
-            return &scene;
-        }
-    }
-    // Если ID не найден, я возвращаю nullptr — специальное значение «нет сцены».
+    for (const Scene& scene : scenes) if (scene.id == sceneId) return &scene;
     return nullptr;
 }
 
-// Здесь я печатаю повествование курсивом, а имена говорящих — цветными и жирными.
 void printNarrativeText(const std::string& text) {
-    const std::string italic = "\033[3m";
-    const std::string reset = "\033[0m";
+    const std::string italic = "\033[3m", reset = "\033[0m";
     std::size_t cursor = 0;
-
     std::cout << italic;
     while (cursor < text.size()) {
-        std::size_t nextSpeakerPosition = std::string::npos;
-        const SpeakerStyle* nextSpeakerStyle = nullptr;
-
+        std::size_t next = std::string::npos;
+        const SpeakerStyle* speaker = nullptr;
         for (const SpeakerStyle& style : speakerStyles) {
-            // Здесь я ищу UTF-8 последовательность метки и получаю позицию её байтов в строке.
             const std::size_t position = text.find(style.name, cursor);
-            if (position != std::string::npos && position < nextSpeakerPosition) {
-                nextSpeakerPosition = position;
-                nextSpeakerStyle = &style;
-            }
+            if (position != std::string::npos && position < next) { next = position; speaker = &style; }
         }
-
-        if (nextSpeakerStyle == nullptr) {
-            std::cout << text.substr(cursor);
-            break;
-        }
-
-        std::cout << text.substr(cursor, nextSpeakerPosition - cursor)
-                  << reset << nextSpeakerStyle->color << nextSpeakerStyle->name
-                  << reset << italic;
-        // После метки я продолжаю поиск со следующего участка текста.
-        cursor = nextSpeakerPosition + nextSpeakerStyle->name.size();
+        if (speaker == nullptr) { std::cout << text.substr(cursor); break; }
+        std::cout << text.substr(cursor, next - cursor) << reset << speaker->color
+                  << speaker->name << reset << italic;
+        cursor = next + speaker->name.size();
     }
     std::cout << reset;
 }
 
-// Я загружаю текст отдельно от кода, используя ID сцены как имя файла.
 std::string loadSceneText(const std::string& sceneId) {
     const std::string filePath = "data/scenes/" + sceneId + ".txt";
     std::ifstream sceneFile(filePath);
-    if (!sceneFile) {
-        std::cerr << "Не удалось открыть файл сцены: " << filePath << '\n';
-        return "";
-    }
-
-    // Здесь я читаю весь файл целиком, включая переносы строк между абзацами.
-    return std::string(std::istreambuf_iterator<char>(sceneFile),
-                       std::istreambuf_iterator<char>());
+    if (!sceneFile) { std::cerr << "Не удалось открыть файл сцены: " << filePath << '\n'; return ""; }
+    return std::string(std::istreambuf_iterator<char>(sceneFile), std::istreambuf_iterator<char>());
 }
 
-// Я прохожу сцены одну за другой, пока игрок не дойдёт до конца ветки.
-void playScene(const std::string& firstSceneId, Player& player) {
-    // Здесь я храню адрес сцены, которая сейчас показывается игроку.
-    const Scene* currentScene = findScene(firstSceneId);
-    bool skipSceneRewards = false;
-
-    while (currentScene != nullptr) {
-        // Перед новой сценой я убираю предыдущий текст с экрана.
+bool playScene(const std::string& firstSceneId, Player& player) {
+    const Scene* current = findScene(firstSceneId);
+    bool sceneRewardApplied = false;
+    while (current != nullptr) {
         clearScreen();
-
-        if (!skipSceneRewards) {
-            // Награду я добавляю один раз при входе; после загрузки сохранения она уже учтена.
-            for (const Reward& reward : currentScene->rewards) {
-                player.inventory[reward.item] += reward.amount;
-            }
-            for (const StatReward& reward : currentScene->statRewards) {
-                // Когда сцена даёт Стужу или Силу, я прибавляю награду к нужной характеристике.
-                if (reward.stat == "Стужа") {
-                    player.frostMagic += reward.amount;
-                } else if (reward.stat == "Сила") {
-                    player.strength += reward.amount;
-                }
+        if (!sceneRewardApplied) {
+            for (const Reward& reward : current->rewards) player.inventory[reward.item] += reward.amount;
+            for (const StatReward& reward : current->statRewards) {
+                if (reward.stat == "Стужа") player.frostMagic += reward.amount;
+                else if (reward.stat == "Сила") player.strength += reward.amount;
+                else if (reward.stat == "Ловкость") player.dexterity += reward.amount;
             }
         }
-        skipSceneRewards = false;
-
-        const std::string sceneText = loadSceneText(currentScene->id);
-        if (sceneText.empty()) {
-            waitForEnter();
-            return;
-        }
-
+        // Открытие инвентаря повторно выводит ту же сцену, поэтому её награды не начисляются снова.
+        sceneRewardApplied = true;
+        const std::string text = loadSceneText(current->id);
+        if (text.empty()) { waitForEnter(); return false; }
         std::cout << '\n';
-        printNarrativeText(sceneText);
+        printNarrativeText(text);
         std::cout << "\n\n";
+        if (current->choices.empty()) break;
 
-        if (currentScene->choices.empty()) {
-            break;
-        }
-
-        std::cout << "0. Инвентарь и характеристики\n";
-        for (int index = 0; index < static_cast<int>(currentScene->choices.size()); ++index) {
-            const Choice& choice = currentScene->choices[index];
-            std::cout << index + 1 << ". " << choice.text;
+        std::cout << "0. Инвентарь\n";
+        for (int i = 0; i < static_cast<int>(current->choices.size()); ++i) {
+            const Choice& choice = current->choices[i];
+            std::cout << i + 1 << ". " << choice.text;
             if (!choice.requirements.empty()) {
                 std::cout << " [требуется: ";
-                for (int requirementIndex = 0;
-                     requirementIndex < static_cast<int>(choice.requirements.size());
-                     ++requirementIndex) {
-                    if (requirementIndex > 0) {
-                        std::cout << ", ";
-                    }
-                    printRequirement(choice.requirements[requirementIndex]);
+                for (int j = 0; j < static_cast<int>(choice.requirements.size()); ++j) {
+                    if (j > 0) std::cout << ", ";
+                    printRequirement(choice.requirements[j]);
                 }
                 std::cout << ']';
             }
             std::cout << '\n';
         }
-
-        const int selectedChoice = readChoice(*currentScene, player);
-        if (selectedChoice == -1) {
-            return;
-        }
-        if (selectedChoice == -2) {
-            bool loadedSave = false;
-            const std::string nextSceneId = showInventory(player, currentScene->id, loadedSave);
-            currentScene = findScene(nextSceneId);
-            skipSceneRewards = loadedSave;
+        std::cout << "9. Параметры\n";
+        const int selection = readChoice(*current, player);
+        if (selection == -1) return false;
+        if (selection == -2) { showInventory(player); continue; }
+        if (selection == -3) {
+            bool loaded = false, quit = false;
+            const std::string next = showParameters(player, current->id, loaded, quit);
+            if (quit) return true;
+            current = findScene(next);
+            sceneRewardApplied = loaded;
             continue;
         }
-
-        // Я беру выбранное действие, применяю его стоимость и перехожу по его ID.
-        const Choice& choice = currentScene->choices[selectedChoice];
+        const Choice& choice = current->choices[selection];
         applyCosts(player, choice);
-        const std::string nextSceneId = choice.nextSceneId;
-        currentScene = findScene(nextSceneId);
+        current = findScene(choice.nextSceneId);
+        sceneRewardApplied = false;
     }
-
     waitForEnter();
+    return false;
 }
 
-// Здесь начинается программа: главное меню запускает создание героя или закрывает игру.
 int main() {
-    bool isRunning = true;
+    bool running = true;
     Player player;
-
-    while (isRunning) {
+    while (running) {
         clearScreen();
-        std::cout << "=== СНЕЖНЫЙ СЕВЕР ===\n"
-                  << "1. Начать игру\n"
-                  << "2. Выход\n";
-
+        std::cout << "=== ЛЕДЯНОЙ ТРОН ===\n1. Начать игру\n2. Выход\n";
         const int choice = readNumber(1, 2, "Твой выбор: ");
-        if (choice == -1) {
-            break;
-        }
-
+        if (choice < 0) break;
         if (choice == 1) {
-            // Начало новой игры возвращает героя к стартовым характеристикам и предметам.
             player = Player{};
             std::string firstSceneId;
-            if (configurePlayer(player, firstSceneId)) {
-                playScene(firstSceneId, player);
-            }
-        } else {
-            isRunning = false;
-        }
+            if (configurePlayer(player, firstSceneId) && playScene(firstSceneId, player)) running = false;
+        } else running = false;
     }
-
     std::cout << "До встречи!\n";
     return 0;
 }
