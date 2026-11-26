@@ -1,13 +1,17 @@
 // Здесь я подключаю стандартные библиотеки для файлов сохранения, текста,
 // поиска предметов и хранения сцен с вариантами выбора.
 #include <iostream>
+#include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <iterator>
-#include <limits>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
+
+// Я задаю единую ширину всех экранов и оставляю терминалу запас до правого края.
+constexpr std::size_t screenWidth = 108;
 
 // Здесь я храню состояние героя. Все три характеристики начинаются с пяти.
 struct Player {
@@ -55,8 +59,8 @@ int readNumber(int minValue, int maxValue, const std::string& prompt);
 
 void waitForEnter() {
     std::cout << "\nНажми Enter, чтобы продолжить...";
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    std::cin.get();
+    std::string ignoredLine;
+    std::getline(std::cin, ignoredLine);
     clearScreen();
 }
 
@@ -134,16 +138,145 @@ bool loadGame(Player& player, std::string& sceneId) {
     return true;
 }
 
+// Я считаю экранные колонки, а не байты UTF-8: знак ударения не занимает отдельную колонку.
+bool isCombiningMark(unsigned int codePoint) {
+    return (codePoint >= 0x0300 && codePoint <= 0x036F)
+        || (codePoint >= 0x1AB0 && codePoint <= 0x1AFF)
+        || (codePoint >= 0x1DC0 && codePoint <= 0x1DFF)
+        || (codePoint >= 0x20D0 && codePoint <= 0x20FF)
+        || (codePoint >= 0xFE20 && codePoint <= 0xFE2F);
+}
+
+unsigned int readUtf8CodePoint(const std::string& text, std::size_t position,
+                               std::size_t& byteCount) {
+    const unsigned char first = static_cast<unsigned char>(text[position]);
+    if ((first & 0x80) == 0) { byteCount = 1; return first; }
+    if ((first & 0xE0) == 0xC0 && position + 1 < text.size()) {
+        byteCount = 2;
+        return ((first & 0x1F) << 6)
+             | (static_cast<unsigned char>(text[position + 1]) & 0x3F);
+    }
+    if ((first & 0xF0) == 0xE0 && position + 2 < text.size()) {
+        byteCount = 3;
+        return ((first & 0x0F) << 12)
+             | ((static_cast<unsigned char>(text[position + 1]) & 0x3F) << 6)
+             | (static_cast<unsigned char>(text[position + 2]) & 0x3F);
+    }
+    if ((first & 0xF8) == 0xF0 && position + 3 < text.size()) {
+        byteCount = 4;
+        return ((first & 0x07) << 18)
+             | ((static_cast<unsigned char>(text[position + 1]) & 0x3F) << 12)
+             | ((static_cast<unsigned char>(text[position + 2]) & 0x3F) << 6)
+             | (static_cast<unsigned char>(text[position + 3]) & 0x3F);
+    }
+    byteCount = 1;
+    return first;
+}
+
+std::size_t utf8Length(const std::string& text) {
+    std::size_t count = 0;
+    for (std::size_t position = 0; position < text.size();) {
+        std::size_t byteCount = 1;
+        const unsigned int codePoint = readUtf8CodePoint(text, position, byteCount);
+        if (!isCombiningMark(codePoint)) ++count;
+        position += byteCount;
+    }
+    return count;
+}
+
+std::string takeUtf8Characters(const std::string& text, std::size_t count) {
+    std::size_t position = 0;
+    std::size_t cells = 0;
+    while (position < text.size()) {
+        std::size_t byteCount = 1;
+        const unsigned int codePoint = readUtf8CodePoint(text, position, byteCount);
+        if (!isCombiningMark(codePoint) && cells >= count) break;
+        if (!isCombiningMark(codePoint)) ++cells;
+        position += byteCount;
+    }
+    return text.substr(0, position);
+}
+
+std::string fitText(const std::string& text, std::size_t width) {
+    const std::size_t length = utf8Length(text);
+    if (length >= width) return takeUtf8Characters(text, width);
+    return text + std::string(width - length, ' ');
+}
+
+// Здесь я переношу длинные фразы по словам, чтобы они не ломали рамки интерфейса.
+std::vector<std::string> wrapLine(const std::string& line, std::size_t width) {
+    std::istringstream words(line);
+    std::vector<std::string> result;
+    std::string word;
+    std::string current;
+    while (words >> word) {
+        if (utf8Length(word) > width) {
+            if (!current.empty()) {
+                result.push_back(current);
+                current.clear();
+            }
+            while (utf8Length(word) > width) {
+                result.push_back(takeUtf8Characters(word, width));
+                word = word.substr(takeUtf8Characters(word, width).size());
+            }
+        }
+        if (current.empty()) current = word;
+        else if (utf8Length(current) + 1 + utf8Length(word) <= width) current += " " + word;
+        else {
+            result.push_back(current);
+            current = word;
+        }
+    }
+    if (!current.empty() || result.empty()) result.push_back(current);
+    return result;
+}
+
+void printBoxTop(const std::string& title, std::size_t width = screenWidth) {
+    const std::string centered = " " + title + " ";
+    const std::size_t titleWidth = utf8Length(centered);
+    const std::size_t left = (width - titleWidth) / 2;
+    const std::size_t right = width - titleWidth - left;
+    std::string leftBorder, rightBorder;
+    for (std::size_t i = 0; i < left; ++i) leftBorder += "─";
+    for (std::size_t i = 0; i < right; ++i) rightBorder += "─";
+    std::cout << "┌" << leftBorder << centered << rightBorder << "┐\n";
+}
+
+void printBoxLine(const std::string& text, std::size_t width = screenWidth) {
+    std::cout << "│" << fitText(text, width) << "│\n";
+}
+
+void printBoxBottom(std::size_t width = screenWidth) {
+    std::string border;
+    for (std::size_t i = 0; i < width; ++i) border += "─";
+    std::cout << "└" << border << "┘\n";
+}
+
+std::string horizontalBorder(std::size_t width) {
+    std::string border;
+    for (std::size_t i = 0; i < width; ++i) border += "─";
+    return border;
+}
+
+void showSimpleScreen(const std::string& title, const std::vector<std::string>& lines) {
+    clearScreen();
+    printBoxTop(title);
+    for (const std::string& line : lines) {
+        for (const std::string& wrapped : wrapLine(line, screenWidth)) printBoxLine(wrapped);
+    }
+    printBoxBottom();
+}
+
 std::string showParameters(Player& player, const std::string& currentSceneId,
                            bool& loadedSave, bool& shouldQuit) {
     loadedSave = false;
     shouldQuit = false;
-    clearScreen();
-    std::cout << "=== ПАРАМЕТРЫ ===\n\n"
-              << "1. Вернуться к игре\n"
-              << "2. Сохранить игру\n"
-              << "3. Загрузить игру\n"
-              << "4. Выйти из игры\n";
+    showSimpleScreen("ПАРАМЕТРЫ", {
+        "1. Вернуться к игре",
+        "2. Сохранить игру",
+        "3. Загрузить игру",
+        "4. Выйти из игры"
+    });
     const int choice = readNumber(1, 4, "Твой выбор: ");
     if (choice == -1 || choice == 1) return currentSceneId;
     if (choice == 2) {
@@ -165,13 +298,19 @@ std::string showParameters(Player& player, const std::string& currentSceneId,
 
 // Инвентарь показывает и вещи героя, и его характеристики.
 void showInventory(const Player& player) {
-    clearScreen();
-    std::cout << "=== ИНВЕНТАРЬ ===\n\nХАРАКТЕРИСТИКИ\n"
-              << "Сила: " << player.strength << '\n'
-              << "Стужа: " << player.frostMagic << '\n'
-              << "Ловкость: " << player.dexterity << "\n\nПРЕДМЕТЫ\n";
-    if (player.inventory.empty()) std::cout << "Пока пусто.\n";
-    for (const auto& item : player.inventory) std::cout << item.first << ": " << item.second << '\n';
+    std::vector<std::string> lines{
+        "ХАРАКТЕРИСТИКИ",
+        "Сила: " + std::to_string(player.strength),
+        "Стужа: " + std::to_string(player.frostMagic),
+        "Ловкость: " + std::to_string(player.dexterity),
+        "",
+        "ПРЕДМЕТЫ"
+    };
+    if (player.inventory.empty()) lines.push_back("Пока пусто.");
+    for (const auto& item : player.inventory) {
+        lines.push_back(item.first + ": " + std::to_string(item.second));
+    }
+    showSimpleScreen("ИНВЕНТАРЬ", lines);
     waitForEnter();
 }
 
@@ -180,24 +319,48 @@ void clearScreen() { std::cout << "\033[2J\033[H" << std::flush; }
 int readNumber(int minValue, int maxValue, const std::string& prompt) {
     while (true) {
         std::cout << prompt;
+        std::string input;
+        if (!std::getline(std::cin, input)) return -1;
+
+        // Я разбираю целую строку, чтобы после числового выбора не оставался Enter в потоке ввода.
+        std::istringstream line(input);
         int number = 0;
-        if (std::cin >> number) {
+        char extraCharacter = '\0';
+        if (line >> number && !(line >> extraCharacter)) {
             if (number >= minValue && number <= maxValue) return number;
             std::cout << "Введи число от " << minValue << " до " << maxValue << ".\n";
-        } else if (std::cin.eof()) {
-            return -1;
         } else {
             std::cout << "Введи номер цифрой.\n";
-            std::cin.clear();
-            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
         }
     }
 }
 
 int readChoice(const Scene& scene, const Player& player) {
     while (true) {
-        const int choice = readNumber(0, 9, "Твой выбор: ");
-        if (choice < 0) return -1;
+        const std::string prompt = scene.choices.size() == 1
+                                       ? "Твой выбор (Enter — выбрать вариант 1): "
+                                       : "Твой выбор: ";
+        std::cout << prompt;
+        std::string input;
+        if (!std::getline(std::cin, input)) return -1;
+
+        const bool isBlank = input.find_first_not_of(" \t\r") == std::string::npos;
+        int choice = 0;
+        if (isBlank && scene.choices.size() == 1) {
+            choice = 1;
+        } else {
+            std::istringstream line(input);
+            char extraCharacter = '\0';
+            if (isBlank || !(line >> choice) || (line >> extraCharacter)) {
+                std::cout << "Введи номер варианта из списка.\n";
+                continue;
+            }
+        }
+
+        if (choice < 0 || choice > 9) {
+            std::cout << "Введи номер варианта из списка.\n";
+            continue;
+        }
         if (choice == 0) return -2;
         if (choice == 9) return -3;
         if (choice > static_cast<int>(scene.choices.size())) {
@@ -222,14 +385,16 @@ int readChoice(const Scene& scene, const Player& player) {
 
 bool configurePlayer(Player& player, std::string& firstSceneId) {
     while (true) {
-        clearScreen();
-        std::cout << "=== СОЗДАНИЕ ГЕРОЯ ===\n"
-                  << "Сила: " << player.strength << '\n'
-                  << "Стужа: " << player.frostMagic << '\n'
-                  << "Ловкость: " << player.dexterity << '\n'
-                  << "Свободные очки: " << player.freePoints << "\n\n";
+        std::vector<std::string> lines{
+            "Сила: " + std::to_string(player.strength),
+            "Стужа: " + std::to_string(player.frostMagic),
+            "Ловкость: " + std::to_string(player.dexterity),
+            "Свободные очки: " + std::to_string(player.freePoints),
+            ""
+        };
         if (player.freePoints == 0) {
-            std::cout << "1. Начать игру\n2. Загрузить сохранение\n3. Назад\n";
+            lines.insert(lines.end(), {"1. Начать игру", "2. Загрузить сохранение", "3. Назад"});
+            showSimpleScreen("СОЗДАНИЕ ГЕРОЯ", lines);
             const int choice = readNumber(1, 3, "Твой выбор: ");
             if (choice < 0 || choice == 3) return false;
             if (choice == 1) { firstSceneId = "narration_63"; return true; }
@@ -238,8 +403,14 @@ bool configurePlayer(Player& player, std::string& firstSceneId) {
             waitForEnter();
             continue;
         }
-        std::cout << "1. Добавить 1 к Силе\n2. Добавить 1 к Стуже\n"
-                  << "3. Добавить 1 к Ловкости\n4. Загрузить сохранение\n5. Назад\n";
+        lines.insert(lines.end(), {
+            "1. Добавить 1 к Силе",
+            "2. Добавить 1 к Стуже",
+            "3. Добавить 1 к Ловкости",
+            "4. Загрузить сохранение",
+            "5. Назад"
+        });
+        showSimpleScreen("СОЗДАНИЕ ГЕРОЯ", lines);
         const int choice = readNumber(1, 5, "Твой выбор: ");
         if (choice < 0 || choice == 5) return false;
         if (choice == 4) {
@@ -286,11 +457,138 @@ std::string loadSceneText(const std::string& sceneId) {
     return std::string(std::istreambuf_iterator<char>(sceneFile), std::istreambuf_iterator<char>());
 }
 
+struct ScreenLine {
+    std::string text;
+    bool isNarrative = false;
+};
+
+void appendWrappedText(std::vector<ScreenLine>& output, const std::string& text,
+                       std::size_t width, bool isNarrative) {
+    std::istringstream sourceLines(text);
+    std::string sourceLine;
+    bool hasPreviousContent = false;
+    bool previousWasSpeaker = false;
+    while (std::getline(sourceLines, sourceLine)) {
+        if (sourceLine.find_first_not_of(" \t\r") == std::string::npos) {
+            // Я схлопываю пустые строки и решаю по соседним типам текста, нужен ли отступ.
+            continue;
+        }
+        bool currentIsSpeaker = false;
+        for (const SpeakerStyle& style : speakerStyles) {
+            if (sourceLine.rfind(style.name, 0) == 0) currentIsSpeaker = true;
+        }
+        // Я отделяю повествование пустым рядом, а последовательные реплики оставляю вместе.
+        if (isNarrative && hasPreviousContent && (!previousWasSpeaker || !currentIsSpeaker)
+            && (output.empty() || !output.back().text.empty())) {
+            // Я разделяю повествовательные абзацы и переходы к репликам одним пустым рядом.
+            output.push_back({"", isNarrative});
+        }
+        for (const std::string& wrapped : wrapLine(sourceLine, width)) {
+            output.push_back({wrapped, isNarrative});
+        }
+        hasPreviousContent = true;
+        previousWasSpeaker = currentIsSpeaker;
+    }
+    // Я убираю пустые строки в конце сцены, чтобы перед вариантами не появлялся лишний зазор.
+    while (!output.empty() && output.back().text.empty()) output.pop_back();
+}
+
+std::string inventoryLabel(const std::string& itemName) {
+    if (itemName == "Обычная стрела") return "Стрела";
+    return itemName;
+}
+
+// Здесь я собираю экран из двух колонок и нижней полосы предметов, как на эскизе.
+void showSceneScreen(const Scene& scene, const Player& player, const std::string& narrative) {
+    // Я оставляю запас по ширине, чтобы терминал не переносил правую стенку рамки.
+    constexpr std::size_t leftWidth = 32;
+    constexpr std::size_t rightWidth = screenWidth - leftWidth - 1;
+    constexpr std::size_t narrativeWidth = rightWidth - 2;
+    std::vector<ScreenLine> rightLines;
+    appendWrappedText(rightLines, narrative, narrativeWidth, true);
+
+    if (!scene.choices.empty()) {
+        rightLines.push_back({"", false});
+        for (int i = 0; i < static_cast<int>(scene.choices.size()); ++i) {
+            const Choice& choice = scene.choices[i];
+            std::string label = std::to_string(i + 1) + ". " + choice.text;
+            if (!choice.requirements.empty()) {
+                label += meetsRequirements(player, choice.requirements)
+                             ? " [требуется: "
+                             : " [недоступно — требуется: ";
+                for (int j = 0; j < static_cast<int>(choice.requirements.size()); ++j) {
+                    if (j > 0) label += ", ";
+                    label += choice.requirements[j].name;
+                    label += choice.requirements[j].type == RequirementType::stat ? " ≥ " : " × ";
+                    label += std::to_string(choice.requirements[j].amount);
+                }
+                label += "]";
+            }
+            appendWrappedText(rightLines, label, narrativeWidth, false);
+        }
+    }
+
+    std::vector<std::string> statusLines{
+        "Сила: " + std::to_string(player.strength),
+        "Стужа: " + std::to_string(player.frostMagic),
+        "Ловкость: " + std::to_string(player.dexterity)
+    };
+    const std::size_t contentHeight = std::max(statusLines.size(), rightLines.size());
+
+    clearScreen();
+    printBoxTop("ЛЕДЯНОЙ ТРОН", screenWidth);
+    std::cout << "├" << horizontalBorder(leftWidth) << "┬"
+              << horizontalBorder(rightWidth) << "┤\n";
+    std::cout << "│" << fitText("ХАРАКТЕРИСТИКИ", leftWidth) << "│"
+              << fitText("ИСТОРИЯ И ВЫБОР", rightWidth) << "│\n";
+    std::cout << "├" << horizontalBorder(leftWidth) << "┼"
+              << horizontalBorder(rightWidth) << "┤\n";
+
+    for (std::size_t row = 0; row < contentHeight; ++row) {
+        const std::string left = row < statusLines.size() ? statusLines[row] : "";
+        std::cout << "│" << fitText(left, leftWidth) << "│";
+        if (row < rightLines.size() && rightLines[row].isNarrative) {
+            printNarrativeText(rightLines[row].text);
+            std::cout << std::string(rightWidth - utf8Length(rightLines[row].text), ' ');
+        } else if (row < rightLines.size()) {
+            std::cout << fitText(rightLines[row].text, rightWidth);
+        } else {
+            std::cout << std::string(rightWidth, ' ');
+        }
+        std::cout << "│\n";
+    }
+
+    std::cout << "├" << horizontalBorder(screenWidth) << "┤\n";
+    constexpr std::size_t inventoryWidth = 64;
+    constexpr std::size_t actionsWidth = screenWidth - inventoryWidth - 1;
+    std::cout << "│" << fitText("ИНВЕНТАРЬ", inventoryWidth) << "│"
+              << fitText("ДЕЙСТВИЯ", actionsWidth) << "│\n";
+    std::cout << "├" << horizontalBorder(inventoryWidth) << "┼"
+              << horizontalBorder(actionsWidth) << "┤\n";
+    std::vector<std::string> slots;
+    for (const auto& item : player.inventory) {
+        if (item.second > 0) {
+            slots.push_back("[" + inventoryLabel(item.first) + " ×" + std::to_string(item.second) + "]");
+        }
+    }
+    while (slots.size() < 6) slots.push_back("[пусто]");
+    for (std::size_t row = 0; row < 2; ++row) {
+        std::string slotRow;
+        for (std::size_t column = 0; column < 3; ++column) {
+            if (column > 0) slotRow += "  ";
+            slotRow += fitText(slots[row * 3 + column], 20);
+        }
+        const std::string action = row == 0 ? "[0] Инвентарь" : "[9] Параметры";
+        std::cout << "│" << fitText(slotRow, inventoryWidth) << "│"
+                  << fitText(action, actionsWidth) << "│\n";
+    }
+    printBoxBottom(screenWidth);
+}
+
 bool playScene(const std::string& firstSceneId, Player& player) {
     const Scene* current = findScene(firstSceneId);
     bool sceneRewardApplied = false;
     while (current != nullptr) {
-        clearScreen();
         if (!sceneRewardApplied) {
             for (const Reward& reward : current->rewards) player.inventory[reward.item] += reward.amount;
             for (const StatReward& reward : current->statRewards) {
@@ -303,26 +601,8 @@ bool playScene(const std::string& firstSceneId, Player& player) {
         sceneRewardApplied = true;
         const std::string text = loadSceneText(current->id);
         if (text.empty()) { waitForEnter(); return false; }
-        std::cout << '\n';
-        printNarrativeText(text);
-        std::cout << "\n\n";
+        showSceneScreen(*current, player, text);
         if (current->choices.empty()) break;
-
-        std::cout << "0. Инвентарь\n";
-        for (int i = 0; i < static_cast<int>(current->choices.size()); ++i) {
-            const Choice& choice = current->choices[i];
-            std::cout << i + 1 << ". " << choice.text;
-            if (!choice.requirements.empty()) {
-                std::cout << " [требуется: ";
-                for (int j = 0; j < static_cast<int>(choice.requirements.size()); ++j) {
-                    if (j > 0) std::cout << ", ";
-                    printRequirement(choice.requirements[j]);
-                }
-                std::cout << ']';
-            }
-            std::cout << '\n';
-        }
-        std::cout << "9. Параметры\n";
         const int selection = readChoice(*current, player);
         if (selection == -1) return false;
         if (selection == -2) { showInventory(player); continue; }
@@ -347,8 +627,7 @@ int main() {
     bool running = true;
     Player player;
     while (running) {
-        clearScreen();
-        std::cout << "=== ЛЕДЯНОЙ ТРОН ===\n1. Начать игру\n2. Выход\n";
+        showSimpleScreen("ЛЕДЯНОЙ ТРОН", {"1. Начать игру", "2. Выход"});
         const int choice = readNumber(1, 2, "Твой выбор: ");
         if (choice < 0) break;
         if (choice == 1) {

@@ -14,6 +14,8 @@ cmake --build build
 ./build/game
 ```
 
+Для рамок псевдографики используй UTF-8-терминал шириной не менее 112 столбцов.
+
 В главном меню выбери «Начать игру» или «Выход». Сила, Стужа и Ловкость начинаются с 5; перед игрой можно распределить ещё три очка между характеристиками.
 
 Во время сцены нажми `0`, чтобы открыть инвентарь с характеристиками и предметами, или `9`, чтобы открыть параметры. В параметрах можно вернуться к игре, сохранить или загрузить сохранение либо выйти. Сохранение находится в локальном файле `savegame.txt`.
@@ -33,6 +35,8 @@ cmake -S . -B build
 cmake --build build
 ./build/game
 ```
+
+The pseudo-graphic frame needs a UTF-8 terminal at least 112 columns wide.
 
 Choose **Start Game** or **Exit** from the main menu. Strength, Frost, and Dexterity start at 5. Before playing, you can distribute three additional points among these attributes.
 
